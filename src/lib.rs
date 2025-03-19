@@ -16,9 +16,17 @@ extern "C" {
 /// - bytes: 图片字节数组，前端传Uint8Array
 /// - quality: 压缩质量，0-100，越小质量越低
 #[wasm_bindgen]
-pub fn compress(bytes: &[u8], quality: u8) -> Result<Vec<u8>, JsError> {
+pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8>, JsError> {
     // 加载图像
-    let image = image::load_from_memory(bytes)?;
+    let mut image = image::load_from_memory(bytes)?;
+    if resize_percent != 1.0 {
+        let (width, height) = (image.width(), image.height());
+        let new_width = (width as f32 * resize_percent) as u32;
+        let new_height = (height as f32 * resize_percent) as u32;
+        let resized_image =
+            image.resize(new_width, new_height, image::imageops::FilterType::Nearest);
+        image = resized_image;
+    }
     // 最终编码后的图片数据
     let mut output = Vec::new();
 
