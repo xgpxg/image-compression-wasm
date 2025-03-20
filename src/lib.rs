@@ -1,5 +1,5 @@
 use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
-use image::codecs::jpeg::JpegEncoder;
+use image::codecs::jpeg::{JpegEncoder, PixelDensity};
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{
     AnimationDecoder, DynamicImage, EncodableLayout, ExtendedColorType, Frame, GenericImageView,
@@ -38,13 +38,22 @@ pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8
             quantify_png_with_color_index(image, quality, &mut output)?;
         }
         ImageFormat::Jpeg | ImageFormat::WebP => {
-            let encoder = JpegEncoder::new_with_quality(&mut output, quality);
+            let mut encoder = JpegEncoder::new_with_quality(&mut output, quality);
             encoder.write_image(
                 image.as_bytes(),
                 image.width(),
                 image.height(),
-                ExtendedColorType::Rgb8,
+                ExtendedColorType::from(image.color()),
             )?;
+
+            // 如果压缩后的图片大小大于等于原始图片大小，则递归压缩图片质量
+            if output.len() >= bytes.len() {
+                if quality == 1 {
+                    return Ok(output);
+                }
+                let quality = quality / 2;
+                return compress(&bytes, quality, resize_percent);
+            }
         }
         ImageFormat::Gif => {
             let decoder = GifDecoder::new(Cursor::new(bytes))?;
@@ -88,7 +97,8 @@ fn resize_image(image: DynamicImage, resize_percent: f32) -> DynamicImage {
 /// - image: 图片
 /// - quality: 压缩质量，0-100，越小质量越低
 fn quantify_png_with_rgba(image: DynamicImage, quality: u8) -> Result<image::RgbaImage, JsError> {
-    let (palette, pixels) = quantify_and_get_platte_and_indexes(&image, quality)?;
+    let (width, height) = (image.width(), image.height());
+    let (palette, pixels) = quantify_and_get_platte_and_indexes(image, quality)?;
 
     let mut buf = Vec::with_capacity(pixels.len());
     for index in pixels {
@@ -97,8 +107,8 @@ fn quantify_png_with_rgba(image: DynamicImage, quality: u8) -> Result<image::Rgb
         buf.extend_from_slice(&[rgba.r, rgba.g, rgba.b, rgba.a]);
     }
 
-    let rgba_image = image::RgbaImage::from_vec(image.width(), image.height(), buf)
-        .expect("Failed to create image");
+    let rgba_image =
+        image::RgbaImage::from_vec(width, height, buf).expect("Failed to create image");
 
     Ok(rgba_image)
 }
@@ -112,7 +122,9 @@ fn quantify_png_with_color_index<W: Write>(
     quality: u8,
     output: W,
 ) -> Result<(), JsError> {
-    let (palette, indexes) = quantify_and_get_platte_and_indexes(&image, quality)?;
+    let (width, height) = (image.width(), image.height());
+
+    let (palette, indexes) = quantify_and_get_platte_and_indexes(image, quality)?;
 
     // RGB调色板
     let rgb_palette = palette
@@ -122,7 +134,7 @@ fn quantify_png_with_color_index<W: Write>(
     // 透明通道调色板
     let alpha_values = palette.iter().map(|rgba| rgba.a).collect::<Vec<u8>>();
 
-    let mut encoder = png::Encoder::new(output, image.width(), image.height());
+    let mut encoder = png::Encoder::new(output, width, height);
     encoder.set_palette(rgb_palette);
     encoder.set_trns(alpha_values);
     encoder.set_color(png::ColorType::Indexed);
@@ -141,9 +153,10 @@ fn quantify_png_with_color_index<W: Write>(
 /// - image: 图片
 /// - quality: 压缩质量，0-100，越小质量越低
 fn quantify_and_get_platte_and_indexes(
-    image: &DynamicImage,
+    image: DynamicImage,
     quality: u8,
 ) -> Result<(Vec<RGBA>, Vec<u8>), JsError> {
+    let image = image.into_rgba8();
     let (width, height) = (image.width(), image.height());
 
     let mut quantizer = imagequant::new();
