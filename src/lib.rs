@@ -1,13 +1,11 @@
 use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
-use image::codecs::jpeg::{JpegEncoder, PixelDensity};
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::codecs::jpeg::JpegEncoder;
 use image::{
     AnimationDecoder, DynamicImage, EncodableLayout, ExtendedColorType, Frame, GenericImageView,
     ImageEncoder, ImageFormat,
 };
 use imagequant::{Image as QImage, RGBA};
-use png::chunk::PLTE;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -38,6 +36,7 @@ pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8
             quantify_png_with_color_index(image, quality, &mut output)?;
         }
         ImageFormat::Jpeg | ImageFormat::WebP => {
+            let quality = (quality as f32 * 0.75) as u8;
             let mut encoder = JpegEncoder::new_with_quality(&mut output, quality);
             encoder.write_image(
                 image.as_bytes(),
@@ -45,15 +44,6 @@ pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8
                 image.height(),
                 ExtendedColorType::from(image.color()),
             )?;
-
-            // 如果压缩后的图片大小大于等于原始图片大小，则递归压缩图片质量
-            if output.len() >= bytes.len() {
-                if quality == 1 {
-                    return Ok(output);
-                }
-                let quality = quality / 2;
-                return compress(&bytes, quality, resize_percent);
-            }
         }
         ImageFormat::Gif => {
             let decoder = GifDecoder::new(Cursor::new(bytes))?;
