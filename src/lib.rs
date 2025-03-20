@@ -44,9 +44,6 @@ pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8
                 image.height(),
                 ExtendedColorType::from(image.color()),
             )?;
-            if output.len() > bytes.len() {
-                return Ok(bytes.to_vec());
-            }
         }
         ImageFormat::Gif => {
             let decoder = GifDecoder::new(Cursor::new(bytes))?;
@@ -71,6 +68,10 @@ pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8
         _ => {
             return Err(JsError::new("Unsupported image format"));
         }
+    }
+
+    if output.len() > bytes.len() {
+        return Ok(bytes.to_vec());
     }
 
     Ok(output)
