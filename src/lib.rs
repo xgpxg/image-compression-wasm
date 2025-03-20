@@ -1,9 +1,12 @@
+use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{
-    ColorType, DynamicImage, EncodableLayout, ExtendedColorType, GenericImageView, ImageEncoder,
+    AnimationDecoder, DynamicImage, EncodableLayout, ExtendedColorType, Frame, ImageEncoder,
+    ImageFormat,
 };
 use imagequant::{Image as QImage, RGBA};
+use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -18,29 +21,17 @@ extern "C" {
 #[wasm_bindgen]
 pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8>, JsError> {
     // 加载图像
-    let mut image = image::load_from_memory(bytes)?;
-    if resize_percent != 1.0 {
-        let (width, height) = (image.width(), image.height());
-        let new_width = (width as f32 * resize_percent) as u32;
-        let new_height = (height as f32 * resize_percent) as u32;
-        let resized_image =
-            image.resize(new_width, new_height, image::imageops::FilterType::Nearest);
-        image = resized_image;
-    }
+    let image = image::load_from_memory(bytes)?;
+    // 调整图片尺寸(对gif无效)
+    let image = resize_image(image, resize_percent);
+    // 获取图片格式
+    let format = image::guess_format(bytes)?;
+
     // 最终编码后的图片数据
     let mut output = Vec::new();
 
-    match image.color() {
-        ColorType::Rgb8 => {
-            let encoder = JpegEncoder::new_with_quality(&mut output, quality);
-            encoder.write_image(
-                image.as_bytes(),
-                image.width(),
-                image.height(),
-                ExtendedColorType::Rgb8,
-            )?;
-        }
-        ColorType::Rgba8 => {
+    match format {
+        ImageFormat::Png => {
             // 量化PNG图片
             let rgba_image = quantify_png(image, quality)?;
 
@@ -58,14 +49,54 @@ pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8
                 ExtendedColorType::Rgba8,
             )?;
         }
-        _ => {}
+        ImageFormat::Jpeg | ImageFormat::WebP => {
+            let encoder = JpegEncoder::new_with_quality(&mut output, quality);
+            encoder.write_image(
+                image.as_bytes(),
+                image.width(),
+                image.height(),
+                ExtendedColorType::Rgb8,
+            )?;
+        }
+        ImageFormat::Gif => {
+            let decoder = GifDecoder::new(Cursor::new(bytes))?;
+            let frames = decoder.into_frames();
+            let frames = frames.collect_frames()?;
+
+            let frames = frames
+                .into_iter()
+                .map(|frame| {
+                    let image = frame.into_buffer();
+                    let image = DynamicImage::from(image);
+                    let image = resize_image(image, resize_percent);
+                    let image = quantify_png(image, quality).unwrap();
+                    Frame::new(image)
+                })
+                .collect::<Vec<_>>();
+
+            let mut encoder = GifEncoder::new(&mut output);
+            encoder.set_repeat(Repeat::Infinite)?;
+            encoder.encode_frames(frames.into_iter())?;
+        }
+        _ => {
+            return Err(JsError::new("Unsupported image format"));
+        }
     }
 
     Ok(output)
 }
-pub fn quantify_png(image: DynamicImage, quality: u8) -> Result<image::RgbaImage, JsError> {
-    let original_image = image.as_rgba8().expect("Failed to convert image to RGBA");
 
+fn resize_image(image: DynamicImage, resize_percent: f32) -> DynamicImage {
+    if resize_percent == 1.0 {
+        return image;
+    }
+    let (width, height) = (image.width(), image.height());
+    let new_width = (width as f32 * resize_percent) as u32;
+    let new_height = (height as f32 * resize_percent) as u32;
+    image.resize(new_width, new_height, image::imageops::FilterType::Nearest)
+}
+pub fn quantify_png(image: DynamicImage, quality: u8) -> Result<image::RgbaImage, JsError> {
+    let original_image = image.into_rgba8(); //.expect("Failed to convert image to RGBA");
     let (width, height) = (original_image.width(), original_image.height());
 
     let mut quantizer = imagequant::new();
