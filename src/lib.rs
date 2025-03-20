@@ -14,25 +14,25 @@ extern "C" {
     pub fn log(s: &str);
 }
 
-/// 压缩图片
-/// - bytes: 图片字节数组，前端传Uint8Array
-/// - quality: 压缩质量，0-100，越小质量越低
-/// - resize_percent: 压缩尺寸，0-1，越小尺寸越低
+/// Compress image
+/// - bytes: Image byte array (Uint8Array from frontend)
+/// - quality: Compression quality (0-100, lower means worse quality)
+/// - resize_percent: Size scaling factor (0-1, smaller means smaller size)
 #[wasm_bindgen]
 pub fn compress(bytes: &[u8], quality: u8, resize_percent: f32) -> Result<Vec<u8>, JsError> {
-    // 加载图像
+    // Load image
     let image = image::load_from_memory(bytes)?;
-    // 调整图片尺寸(对gif无效)
+    // Resize image (not effective for GIF)
     let image = resize_image(image, resize_percent);
-    // 获取图片格式
+    // Get image format
     let format = image::guess_format(bytes)?;
 
-    // 最终编码后的图片数据
+    // Final encoded image data
     let mut output = Vec::new();
 
     match format {
         ImageFormat::Png => {
-            // 量化PNG图片
+            // Quantify PNG image
             quantify_png_with_color_index(image, quality, &mut output)?;
         }
         ImageFormat::Jpeg | ImageFormat::WebP => {
@@ -87,16 +87,16 @@ fn resize_image(image: DynamicImage, resize_percent: f32) -> DynamicImage {
     image.resize(new_width, new_height, image::imageops::FilterType::Nearest)
 }
 
-/// 量化PNG图片，使用RGBA直接颜色值
-/// - image: 图片
-/// - quality: 压缩质量，0-100，越小质量越低
+/// Quantify PNG image using direct RGBA values
+/// - image: Image to process
+/// - quality: Compression quality (0-100, lower means worse quality)
 fn quantify_png_with_rgba(image: DynamicImage, quality: u8) -> Result<image::RgbaImage, JsError> {
     let (width, height) = (image.width(), image.height());
     let (palette, pixels) = quantify_and_get_platte_and_indexes(image, quality)?;
 
     let mut buf = Vec::with_capacity(pixels.len());
     for index in pixels {
-        // 从调色版中取出颜色，转为rgba
+        // Get color from palette and convert to RGBA
         let rgba = palette[index as usize];
         buf.extend_from_slice(&[rgba.r, rgba.g, rgba.b, rgba.a]);
     }
@@ -107,10 +107,10 @@ fn quantify_png_with_rgba(image: DynamicImage, quality: u8) -> Result<image::Rgb
     Ok(rgba_image)
 }
 
-/// 量化PNG图片，使用调色板+索引的方式
-/// - image: 图片
-/// - quality: 压缩质量，0-100，越小质量越低
-/// - output: 写入的output
+/// Quantify PNG image using palette + index method
+/// - image: Image to process
+/// - quality: Compression quality (0-100, lower means worse quality)
+/// - output: Output writer
 fn quantify_png_with_color_index<W: Write>(
     image: DynamicImage,
     quality: u8,
@@ -120,12 +120,12 @@ fn quantify_png_with_color_index<W: Write>(
 
     let (palette, indexes) = quantify_and_get_platte_and_indexes(image, quality)?;
 
-    // RGB调色板
+    // RGB palette
     let rgb_palette = palette
         .iter()
         .flat_map(|rgba| [rgba.r, rgba.g, rgba.b])
         .collect::<Vec<_>>();
-    // 透明通道调色板
+    // Alpha channel values
     let alpha_values = palette.iter().map(|rgba| rgba.a).collect::<Vec<u8>>();
 
     let mut encoder = png::Encoder::new(output, width, height);
@@ -143,9 +143,9 @@ fn quantify_png_with_color_index<W: Write>(
     Ok(())
 }
 
-/// 量化PNG，并获取PNG图片的调色板和索引
-/// - image: 图片
-/// - quality: 压缩质量，0-100，越小质量越低
+/// Quantify PNG and get palette and indexes
+/// - image: Image to process
+/// - quality: Compression quality (0-100, lower means worse quality)
 fn quantify_and_get_platte_and_indexes(
     image: DynamicImage,
     quality: u8,
@@ -167,12 +167,12 @@ fn quantify_and_get_platte_and_indexes(
         })
         .collect();
 
-    // 量化后的图片
+    // Quantified image
     let mut q_img = QImage::new(&quantizer, rgba_data, width as usize, height as usize, 0.)?;
 
-    // 执行量化
+    // Perform quantization
     let mut res = quantizer.quantize(&mut q_img)?;
 
-    // 调色板和索引
+    // Palette and indexes
     Ok(res.remapped(&mut q_img)?)
 }
